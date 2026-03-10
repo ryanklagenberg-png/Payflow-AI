@@ -1,0 +1,11 @@
+.env
+.env.local
+.env.production
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+uploads/
+.pytest_cache/
+htmlcov/
+*.egg-info/
