@@ -7,6 +7,8 @@ class Settings(BaseSettings):
     UPLOAD_DIR: str = "./uploads"
     MAX_FILE_SIZE_MB: int = 20
     CLAUDE_MODEL: str = "claude-sonnet-4-20250514"
+    JWT_SECRET: str = "change-me-in-production-use-a-real-secret"
+    JWT_EXPIRATION_HOURS: int = 24
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 

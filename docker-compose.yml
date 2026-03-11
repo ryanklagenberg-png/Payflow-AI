@@ -23,6 +23,7 @@ services:
       - .env
     volumes:
       - ./app:/src/app
+      - ./alembic:/src/alembic
       - ./uploads:/src/uploads
     depends_on:
       db:

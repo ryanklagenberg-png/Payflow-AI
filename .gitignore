@@ -9,3 +9,4 @@ uploads/
 .pytest_cache/
 htmlcov/
 *.egg-info/
+.next/

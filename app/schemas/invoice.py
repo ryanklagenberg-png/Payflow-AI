@@ -19,6 +19,8 @@ class ExtractionResult(BaseModel):
     invoice_date: str | None = None
     due_date: str | None = None
     po_number: str | None = None
+    job_number: str | None = None
+    cost_code: str | None = None
     subtotal: float | None = None
     tax_amount: float | None = None
     total_amount: float | None = None
@@ -58,6 +60,8 @@ class InvoiceDetail(BaseModel):
     invoice_date: date | None = None
     due_date: date | None = None
     po_number: str | None = None
+    job_number: str | None = None
+    cost_code: str | None = None
     subtotal: float | None = None
     tax_amount: float | None = None
     total_amount: float | None = None
@@ -71,6 +75,22 @@ class InvoiceDetail(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class InvoiceUpdate(BaseModel):
+    vendor_name: str | None = None
+    vendor_address: str | None = None
+    invoice_number: str | None = None
+    invoice_date: date | None = None
+    due_date: date | None = None
+    po_number: str | None = None
+    job_number: str | None = None
+    cost_code: str | None = None
+    subtotal: float | None = None
+    tax_amount: float | None = None
+    total_amount: float | None = None
+    currency: str | None = None
+    payment_terms: str | None = None
+
+
 class InvoiceListItem(BaseModel):
     id: uuid.UUID
     status: str
@@ -79,6 +99,14 @@ class InvoiceListItem(BaseModel):
     invoice_number: str | None = None
     total_amount: float | None = None
     invoice_date: date | None = None
+    job_number: str | None = None
+    cost_code: str | None = None
+    po_number: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class InvoiceListResponse(BaseModel):
+    items: list[InvoiceListItem]
+    total: int

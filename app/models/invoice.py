@@ -47,6 +47,10 @@ class Invoice(Base):
     currency: Mapped[str] = mapped_column(String(10), default="USD")
     payment_terms: Mapped[str | None] = mapped_column(String(100))
 
+    # Construction-specific fields
+    job_number: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    cost_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
     # AI metadata
     raw_extraction: Mapped[dict | None] = mapped_column(JSONB)
     confidence_score: Mapped[float | None] = mapped_column(Float)
@@ -75,3 +79,19 @@ class InvoiceLineItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     invoice: Mapped["Invoice"] = relationship(back_populates="line_items")
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    invoice_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("invoices.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    user_email: Mapped[str | None] = mapped_column(String(255))
+    action: Mapped[str] = mapped_column(String(50))  # uploaded, extracted, approved, rejected, edited, re-extracted, deleted
+    details: Mapped[str | None] = mapped_column(Text)
+    previous_value: Mapped[dict | None] = mapped_column(JSONB)
+    new_value: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    invoice: Mapped["Invoice"] = relationship()
