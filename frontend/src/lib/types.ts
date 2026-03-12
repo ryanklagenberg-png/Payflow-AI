@@ -9,6 +9,8 @@ export interface InvoiceListItem {
   job_number: string | null;
   cost_code: string | null;
   po_number: string | null;
+  coding_status: "predicted" | "confirmed" | "manual" | null;
+  coding_confidence: number | null;
   created_at: string;
 }
 
@@ -19,6 +21,22 @@ export interface LineItem {
   quantity: number | null;
   unit_price: number | null;
   amount: number | null;
+}
+
+export interface CodingAlternative {
+  job_number: string | null;
+  cost_code: string | null;
+  confidence: number;
+  reasoning: string;
+}
+
+export interface CodingPrediction {
+  predicted_job_number: string | null;
+  predicted_cost_code: string | null;
+  confidence: number;
+  method: string;
+  reasoning: string;
+  alternatives: CodingAlternative[];
 }
 
 export interface InvoiceDetail extends InvoiceListItem {
@@ -32,6 +50,10 @@ export interface InvoiceDetail extends InvoiceListItem {
   currency: string;
   payment_terms: string | null;
   confidence_score: number | null;
+  coding_predictions: CodingPrediction | null;
+  coding_status: "predicted" | "confirmed" | "manual" | null;
+  coding_confidence: number | null;
+  coding_method: string | null;
   line_items: LineItem[];
   updated_at: string;
 }

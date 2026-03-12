@@ -143,6 +143,35 @@ export async function fetchStats(): Promise<DashboardStats> {
   return res.json();
 }
 
+export async function confirmCoding(id: string): Promise<InvoiceDetail> {
+  const res = await fetch(`${API_URL}/api/v1/invoices/${id}/confirm-coding`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Confirm coding failed" }));
+    throw new Error(err.detail || "Confirm coding failed");
+  }
+  return res.json();
+}
+
+export async function selectCodingAlternative(
+  id: string,
+  jobNumber: string | null,
+  costCode: string | null
+): Promise<InvoiceDetail> {
+  const res = await fetch(`${API_URL}/api/v1/invoices/${id}/select-coding`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ job_number: jobNumber, cost_code: costCode }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: "Select coding failed" }));
+    throw new Error(err.detail || "Select coding failed");
+  }
+  return res.json();
+}
+
 export async function reExtractInvoice(id: string): Promise<{ id: string; status: string; confidence_score: number; message: string }> {
   const res = await fetch(`${API_URL}/api/v1/invoices/${id}/re-extract`, {
     method: "POST",

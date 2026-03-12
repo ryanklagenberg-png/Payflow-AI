@@ -55,6 +55,12 @@ class Invoice(Base):
     raw_extraction: Mapped[dict | None] = mapped_column(JSONB)
     confidence_score: Mapped[float | None] = mapped_column(Float)
 
+    # Coding predictions
+    coding_predictions: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    coding_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    coding_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    coding_method: Mapped[str | None] = mapped_column(String(30), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -95,3 +101,20 @@ class AuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     invoice: Mapped["Invoice"] = relationship()
+
+
+class VendorCodingHistory(Base):
+    __tablename__ = "vendor_coding_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), default=uuid.UUID("00000000-0000-0000-0000-000000000000")
+    )
+    vendor_name: Mapped[str] = mapped_column(String(255))
+    job_number: Mapped[str] = mapped_column(String(50))
+    cost_code: Mapped[str] = mapped_column(String(20))
+    invoice_count: Mapped[int] = mapped_column(Integer, default=1)
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (Index("ix_vendor_coding_history_tenant_vendor", "tenant_id", "vendor_name"),)

@@ -68,6 +68,10 @@ class InvoiceDetail(BaseModel):
     currency: str
     payment_terms: str | None = None
     confidence_score: float | None = None
+    coding_predictions: dict | None = None
+    coding_status: str | None = None
+    coding_confidence: float | None = None
+    coding_method: str | None = None
     line_items: list[InvoiceLineItemOut] = []
     created_at: datetime
     updated_at: datetime
@@ -102,6 +106,8 @@ class InvoiceListItem(BaseModel):
     job_number: str | None = None
     cost_code: str | None = None
     po_number: str | None = None
+    coding_status: str | None = None
+    coding_confidence: float | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

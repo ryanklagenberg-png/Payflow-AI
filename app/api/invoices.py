@@ -19,6 +19,7 @@ from app.schemas.invoice import InvoiceDetail, InvoiceListItem, InvoiceListRespo
 from app.models.user import User
 from app.services import storage
 from app.services.auth import get_current_user
+from app.services.coding import predict_coding, update_vendor_history
 from app.services.extraction import extract_invoice
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,18 @@ async def upload_invoice(file: UploadFile, db: AsyncSession = Depends(get_db), u
             db.add(line)
 
         await log_audit(db, invoice.id, "extracted", f"Confidence: {result.confidence_score}", user=user)
+
+        # Run coding agent
+        try:
+            coding_result = await predict_coding(invoice.id, db)
+            await log_audit(
+                db, invoice.id, "coded",
+                f"AI coding: {coding_result.method} (confidence: {coding_result.confidence:.2f})",
+                user=user,
+            )
+        except Exception as coding_err:
+            logger.warning("Coding prediction failed for %s: %s", file.filename, coding_err)
+
         await db.commit()
         message = f"Invoice extracted successfully. Confidence: {result.confidence_score}"
 
@@ -352,6 +365,10 @@ async def update_invoice(invoice_id: str, updates: InvoiceUpdate, db: AsyncSessi
     for field, value in changed.items():
         setattr(invoice, field, value)
 
+    # If job_number or cost_code was manually edited, mark coding as manual
+    if "job_number" in changed or "cost_code" in changed:
+        invoice.coding_status = "manual"
+
     new_val = {k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in changed.items()}
     await log_audit(db, invoice.id, "edited", f"Fields changed: {', '.join(changed.keys())}", previous, new_val, user=user)
     await db.commit()
@@ -414,6 +431,11 @@ async def update_invoice_status(invoice_id: str, body: dict, db: AsyncSession = 
     invoice.status = new_status
     await log_audit(db, invoice.id, new_status, f"Status changed from {old_status} to {new_status}",
                     {"status": old_status}, {"status": new_status}, user=user)
+
+    # Update vendor coding history on approval
+    if new_status == "approved" and invoice.vendor_name and invoice.job_number and invoice.cost_code:
+        await update_vendor_history(db, invoice.vendor_name, invoice.job_number, invoice.cost_code, invoice.tenant_id)
+
     await db.commit()
     await db.refresh(invoice)
     return {"id": str(invoice.id), "status": invoice.status}
@@ -473,6 +495,15 @@ async def re_extract_invoice(invoice_id: str, db: AsyncSession = Depends(get_db)
                         f"Re-extracted. Confidence: {old_confidence} → {result.confidence_score}",
                         {"status": old_status, "confidence": old_confidence},
                         {"status": "extracted", "confidence": result.confidence_score}, user=user)
+
+        # Re-run coding agent
+        try:
+            coding_result = await predict_coding(invoice.id, db)
+            await log_audit(db, invoice.id, "coded",
+                            f"AI coding: {coding_result.method} (confidence: {coding_result.confidence:.2f})", user=user)
+        except Exception as coding_err:
+            logger.warning("Coding prediction failed on re-extract for %s: %s", invoice.file_name, coding_err)
+
         await db.commit()
 
         return {"id": str(invoice.id), "status": "extracted", "confidence_score": result.confidence_score,
@@ -580,6 +611,12 @@ async def upload_invoices_bulk(files: List[UploadFile], db: AsyncSession = Depen
                 )
                 db.add(line)
 
+            # Run coding agent
+            try:
+                coding_result = await predict_coding(invoice.id, db)
+            except Exception as coding_err:
+                logger.warning("Coding prediction failed for %s: %s", file.filename, coding_err)
+
             await db.commit()
             message = f"Invoice extracted successfully. Confidence: {result.confidence_score}"
 
@@ -597,6 +634,85 @@ async def upload_invoices_bulk(files: List[UploadFile], db: AsyncSession = Depen
         ))
 
     return results
+
+
+@router.post("/{invoice_id}/confirm-coding")
+async def confirm_coding(invoice_id: str, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    """Accept the AI-predicted job coding for an invoice."""
+    query = select(Invoice).options(selectinload(Invoice.line_items)).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+
+    if not invoice.coding_predictions:
+        raise HTTPException(status_code=400, detail="No coding predictions available.")
+
+    predictions = invoice.coding_predictions
+    job_number = predictions.get("predicted_job_number")
+    cost_code = predictions.get("predicted_cost_code")
+
+    previous = {"job_number": invoice.job_number, "cost_code": invoice.cost_code, "coding_status": invoice.coding_status}
+
+    if job_number:
+        invoice.job_number = job_number
+    if cost_code:
+        invoice.cost_code = cost_code
+    invoice.coding_status = "confirmed"
+
+    await log_audit(
+        db, invoice.id, "coding_confirmed",
+        f"Confirmed AI coding: job={job_number}, cost_code={cost_code}",
+        previous, {"job_number": job_number, "cost_code": cost_code, "coding_status": "confirmed"},
+        user=user,
+    )
+
+    # Update vendor history
+    if invoice.vendor_name and job_number and cost_code:
+        await update_vendor_history(db, invoice.vendor_name, job_number, cost_code, invoice.tenant_id)
+
+    await db.commit()
+    await db.refresh(invoice)
+    return invoice
+
+
+@router.post("/{invoice_id}/select-coding")
+async def select_coding_alternative(
+    invoice_id: str, body: dict, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)
+):
+    """Select an alternative coding prediction instead of the top one."""
+    query = select(Invoice).options(selectinload(Invoice.line_items)).where(Invoice.id == invoice_id)
+    result = await db.execute(query)
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found.")
+
+    job_number = body.get("job_number")
+    cost_code = body.get("cost_code")
+    if not job_number and not cost_code:
+        raise HTTPException(status_code=400, detail="Provide job_number and/or cost_code.")
+
+    previous = {"job_number": invoice.job_number, "cost_code": invoice.cost_code, "coding_status": invoice.coding_status}
+
+    if job_number:
+        invoice.job_number = job_number
+    if cost_code:
+        invoice.cost_code = cost_code
+    invoice.coding_status = "confirmed"
+
+    await log_audit(
+        db, invoice.id, "coding_confirmed",
+        f"Selected alternative coding: job={job_number}, cost_code={cost_code}",
+        previous, {"job_number": job_number, "cost_code": cost_code, "coding_status": "confirmed"},
+        user=user,
+    )
+
+    if invoice.vendor_name and job_number and cost_code:
+        await update_vendor_history(db, invoice.vendor_name, job_number, cost_code, invoice.tenant_id)
+
+    await db.commit()
+    await db.refresh(invoice)
+    return invoice
 
 
 @router.get("/{invoice_id}/file")
