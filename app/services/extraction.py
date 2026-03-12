@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -12,6 +13,9 @@ from app.schemas.invoice import ExtractionResult
 logger = logging.getLogger(__name__)
 
 client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+
+MAX_RETRIES = 3
+RETRY_DELAYS = [2, 5, 10]  # seconds between retries
 
 MIME_MAP = {
     ".pdf": "application/pdf",
@@ -46,36 +50,72 @@ def _build_content_block(file_path: str) -> dict:
 
 async def extract_invoice(file_path: str) -> ExtractionResult:
     content_block = _build_content_block(file_path)
+    last_error = None
 
-    message = client.messages.create(
-        model=settings.CLAUDE_MODEL,
-        max_tokens=4096,
-        system=INVOICE_EXTRACTION_PROMPT,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    content_block,
-                    {"type": "text", "text": "Extract all invoice data from this document."},
+    for attempt in range(MAX_RETRIES):
+        try:
+            message = client.messages.create(
+                model=settings.CLAUDE_MODEL,
+                max_tokens=4096,
+                system=[
+                    {
+                        "type": "text",
+                        "text": INVOICE_EXTRACTION_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
                 ],
-            }
-        ],
-    )
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            content_block,
+                            {"type": "text", "text": "Extract all invoice data from this document."},
+                        ],
+                    }
+                ],
+            )
 
-    response_text = message.content[0].text
+            response_text = message.content[0].text
 
-    # Strip markdown code fences if present
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        lines = lines[1:]  # remove opening fence
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]  # remove closing fence
-        response_text = "\n".join(lines)
+            # Strip markdown code fences if present
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                lines = lines[1:]  # remove opening fence
+                if lines and lines[-1].strip() == "```":
+                    lines = lines[:-1]  # remove closing fence
+                response_text = "\n".join(lines)
 
-    try:
-        data = json.loads(response_text)
-    except json.JSONDecodeError:
-        logger.error("Failed to parse Claude response: %s", response_text[:500])
-        raise ValueError("AI extraction returned invalid JSON")
+            try:
+                data = json.loads(response_text)
+            except json.JSONDecodeError:
+                logger.error("Failed to parse Claude response (attempt %d): %s", attempt + 1, response_text[:500])
+                last_error = ValueError("AI extraction returned invalid JSON")
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAYS[attempt])
+                continue
 
-    return ExtractionResult(**data)
+            return ExtractionResult(**data)
+
+        except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+            last_error = e
+            logger.warning("Claude API connection error (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(RETRY_DELAYS[attempt])
+
+        except anthropic.RateLimitError as e:
+            last_error = e
+            logger.warning("Claude API rate limited (attempt %d/%d): %s", attempt + 1, MAX_RETRIES, e)
+            if attempt < MAX_RETRIES - 1:
+                await asyncio.sleep(RETRY_DELAYS[attempt] * 2)  # wait longer for rate limits
+
+        except anthropic.APIStatusError as e:
+            # Server errors (500, 529) are retryable; client errors (400, 401) are not
+            if e.status_code >= 500:
+                last_error = e
+                logger.warning("Claude API server error %d (attempt %d/%d): %s", e.status_code, attempt + 1, MAX_RETRIES, e)
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAYS[attempt])
+            else:
+                raise
+
+    raise last_error or ValueError("Extraction failed after all retries")

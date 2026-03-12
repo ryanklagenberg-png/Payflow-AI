@@ -194,7 +194,13 @@ Predict the job_number and cost_code for this invoice."""
         message = client.messages.create(
             model=settings.CLAUDE_MODEL,
             max_tokens=1024,
-            system=GL_CODING_PROMPT,
+            system=[
+                {
+                    "type": "text",
+                    "text": GL_CODING_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
             messages=[{"role": "user", "content": user_message}],
         )
 
